@@ -1,0 +1,266 @@
+\documentclass{report}
+
+\usepackage{amssymb,amsmath,mathtools}
+\usepackage[utf8]{inputenc}
+\usepackage[pdftex]{graphicx}
+\usepackage{fullpage}
+\usepackage{cancel}
+\usepackage{graphviz}
+\usepackage{tabularx}
+\usepackage{tabu}
+\usepackage{longtable}
+\usepackage{hyperref}
+
+\DeclareMathOperator{\rank}{rank}
+\DeclareMathOperator{\nullity}{nullity}
+\DeclareMathOperator{\Ker}{Ker}
+\DeclareMathOperator{\Image}{Im}
+\DeclareMathOperator{\Tr}{Tr}
+\DeclareMathOperator{\adj}{adj}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator{\BigO}{\mathrm{O}}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\logit}{logit}
+\DeclareMathOperator{\Cov}{Cov}
+\DeclareMathOperator{\soft}{soft}
+\DeclareMathOperator{\sign}{sign}
+\newcommand{\KL}[2]{\mathrm{KL}[#1\,\Vert\,#2]}
+\renewcommand{\v}[1]{\boldsymbol{\mathrm{#1}}}
+\newcommand{\m}[1]{\mathrm{#1}}
+\newcommand{\indep}{\perp \! \! \! \perp}
+\newcommand{\given}{\,|\,}
+\renewcommand{\P}{\mathbb{P}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\mathbb{V}\mathrm{ar}}
+% indicator of
+\newcommand{\I}{\mathbb{I}}
+\newcommand{\dist}[2]{\mathrm{#1}\!\left[#2\right]}
+\newcommand{\intrange}[2]{\{#1, \ldots, #2\}}
+\newcommand{\oneto}[1]{\{1, \ldots, #1\}}
+\providecommand{\norm}[1]{\lVert#1\rVert}
+
+\begin{document}
+
+\chapter{Dirichlet-Multinomial Mixture with GP prior on cluster
+  assignment probabilities}
+
+\section{Model}
+\begin{align*}
+  \v{x}_d &\in \mathbb{R}^2 & d = 1, \ldots, D, \text{ observed
+    coordinates of document } d \\
+  \mathcal{K} & & \text{GP covariance function} \\
+  [\mathcal{K}]_{dd'} &:= \mathcal{K}(\v{x}_d, \v{x}_{d'}) &
+  D\times D \text{ kernel matrix} \\
+  \v{f}_k : \mathbb{R}^2 \to \mathbb{R} & \sim GP(0, \mathcal{K}) &
+  k = 1, \ldots, K, \text{topic $k$ geographical variation} \\
+  [F]_{dk} &:= \v{f}_k(\v{x}_d) & D\times K \text{ matrix of document
+    cluster predictors} \\
+  \P(z_d = k) &= \frac{\exp(F_{dk})}{\sum_{k'}\exp(F_{dk'})} &
+  d = 1, \ldots, D, \text{latent document cluster allocations} \\
+  \v\phi_k & \sim Dirichlet(\beta) & k=1,\ldots,K, \text{per-cluster
+    word distributions} \\
+  \P({w}_{dn}=w) &= \v\phi_{z_d,w} & d = 1, \ldots, D, n = 1, \ldots, N_d,
+  \text{observed words in document } d
+\end{align*}
+
+\section{Approach}
+
+\begin{itemize}
+  \item MAP learning for F. Why? not easy to integrate it out, and it
+    inherently has geographical dependencies in it between documents
+    which we've induced using the GP, so doesn't make sense to have
+    independent variational factors for each entry. (Although todo:
+    could we have a Gaussian variational factor for each vector
+    $F_{:,k}$ which retains dependence between the docs? this could
+    mean optimising over a full DxD covariance matrix for each factor
+    though.) MAP learning on the other hand is same as in classic
+    Bayesian GP regression.
+    May specify $\mathcal{K} = (\lambda I + LL^T)$ for some
+    rectangular $L$, e.g. formed using incomplete cholesky decomp, and
+    apply woodbury identity to stop the learning steps being $O(D^3)$
+  \item Integrate out each $\v\phi_k$, as in collapsed variational
+    bayesian inference for LDA
+  \item An independent discrete factor $Q_d(z_d = k) := q_{dk}$ in the variational posterior
+    for each latent $z_d$. This assumes independence of the $z_d$ in
+    the posterior given $F$, which isn't far from true (only mild
+    dependency introduced by the softmax transform)
+  \item A further lower bound on the log normalizer for $P(z_d | F)$
+    will be needed
+\end{itemize}
+
+\section{Variational lower bound to be optimized}
+
+\begin{align*}
+  \log \P(\{w_{dn}\}, F \given \mathcal{K}, \beta)
+  \geq&
+  -\frac{KD}{2}\log(2\pi) - \frac{K}{2} \log |\mathcal{K}| -\frac12 \Tr[F \mathcal{K}^{-1}
+    F^T] & \log \P(F \given \mathcal{K})
+  \\
+  &+ \sum_{dk} f_{dk} q_{dk} - \sum_d \log \sum_k \exp(f_{dk})
+  & \E_Q[\log \P(\{z_d\} \given F)]
+  \\
+  &+ \sum_{kw} \E_Q[\log \Gamma(\beta + N_{kw})] - \sum_k \E_Q[\log\Gamma(W\beta
+  + N_k)]
+  & \E_q[\log \P(\{w_{dn}\} \given \{z_{dn}\}, \beta)]
+  \\
+  &- \sum_{dk} q_{dk} \log q_{dk} & \mathbb{H}[Q]
+  \\
+  \geq & \mathcal{F} & \forall \v{\zeta}
+  \\
+  := & -\frac{KD}{2}\log(2\pi) - \frac{K}{2} \log |\mathcal{K}| -\frac12 \Tr[F \mathcal{K}^{-1}F^T]
+  \\
+  &+ \sum_{dk} f_{dk} q_{dk} - \sum_d (\zeta_d^{-1} \sum_k \exp(f_{dk})
+  + \log \zeta_d - 1)
+  \\
+  &+ \sum_{kw} \E_Q[\log \Gamma(\beta + N_{kw})] - \sum_k \E_Q[\log\Gamma(W\beta + N_k)]
+  \\
+  &- \sum_{dk} q_{dk} \log q_{dk}
+  \\
+  \text{where}
+  \\
+  N_{kw} &:= \sum_{d} \I[z_d = k] N_{dw} \\
+  N_{k} &:= \sum_{d} \I[z_d = k] N_d \\
+  \text{both functions of $\{z_d\}$}
+\end{align*}
+
+\section{Updates}
+
+\subsection{$\zeta_d$}
+
+An exact update for this is just
+
+\begin{align*}
+\zeta_d &= \sum_k \exp(f_{dk})
+\end{align*}
+
+\subsection{$f_{dk}$}
+
+No exact update for this, but a gradient-based update can use:
+
+\begin{align*}
+\frac{\partial \mathcal{F}}{\partial F} &= -\mathcal{K}^{-1}F + Q -
+\diag(\v{\zeta})^{-1} \exp(F)
+\end{align*}
+
+where the $\exp$ is element-wise. For fixed
+$\v\zeta$ there are no cross-derivatives between different $\v{f}_k :=
+F_{:,k}$, so the Hessian tensor is given in terms of the Hessian
+matrices for these vectors:
+
+\begin{align*}
+H_k := \frac{\partial^2 \mathcal{F}}{\partial \v{f}_k \partial \v{f}_k^T} &=
+-\mathcal{K}^{-1} - \diag(\zeta^{-1} \circ \exp(\v{f}_{k}))
+\end{align*}
+
+This is handy as only the diagonal of the Hessian varies per
+iteration.
+
+(If you roll the $\zeta$ update into this update this introduces
+cross-derivatives between the $\v{f}_k$, although they're limited to a
+separate term which itself has no cross-derivatives for different $d$.
+For now leaving this.)
+
+\paragraph{Kernel matrix inversion -- approximations}
+
+So you can approximate your ideal $K$ (e.g. a gaussian kernel plus
+white noise) with a low-rank-plus-diagonal matrix. Say
+
+\[K = LL^T + \sigma^2 I\]
+
+For some $D\times J$ matrix $L$ with $J << D$. Then inverting $K$ can
+be done in $O(DJ^2)$ instead of $O(D^3)$ via the Woodbury identity:
+
+\[K^{-1} = \sigma^{-2}I - \sigma^{-4}LM^{-1}L^T\]
+where
+\[ M := I + \sigma^{-2}L^TL \]
+
+This only needs to be done once to precompute $K^{-1}$. Or for
+stability and cheaper updates, you could precompute a Cholesky
+decomposition of the $J\times J$ matrix $M$ as $M = B^TB$, and then precompute $D
+\times J$ $C := LB^{-1}$. Then to multiply a vector by $K^{-1}$, use $K^{-1}\v{v} = \sigma^{-2}\v{v}
+- \sigma^{-4}CC^T\v{v}$ requiring just two $O(DJ)$ multiplications instead of a $O(D^2)$
+multiplcation by precomputed $K^{-1}$. This also then gives you the
+diagonal entries $[K^{-1}]_{dd} = \sigma^{-2} -
+\sigma^{-4}\v{c}_d^T\v{c}_d$ which are useful for coordinate-wise
+newton updates.
+
+This also helps invert the Hessian if you want to perform
+Newton updates for each $\v{f}_k$:
+
+\begin{align*}
+  -H_k^{-1} &= (K^{-1} + \diag(\zeta^{-1} \circ \exp(\v{f}_{k})))^{-1} \\
+  &= \left[\diag(\zeta^{-1} \circ \exp(\v{f}_{k}) + \sigma^{-2}\v{1}) -
+  \sigma^{-2}L(\sigma^2 I + L^TL)^{-1}L^T\right]^{-1} \\
+  &= (\Lambda - LM^{-1}L^T)^{-1} \\
+  &= \Lambda^{-1} - \Lambda^{-1}L(M +
+  L^T\Lambda^{-1}L)^{-1}L^T\Lambda^{-1} \\
+  \text{where} \\
+  \Lambda &:= \diag(\zeta^{-1} \circ \exp(\v{f}_{k}) + \sigma^{-2}\v{1}) &
+  \text{ which is diagonal}
+\end{align*}
+
+This means the Newton step can also be done in $O(DJ^2)$ instead of
+$O(D^3)$.
+
+You might still be tempted to approximate the Hessian by its diagonal
+though, for a component-wise Newton update, which would keep the
+updates $O(DJ)$ using the pre-computed diagonal of $K^{-1}$.
+
+\subsection{$q_{dk}$}
+
+The exact update for this would be:
+
+\begin{align*}
+q_{dk}  \propto & \exp\Left(f_{dk} + \sum_{w : N_{dw}>0} \E_{Q^{-d}}[\log\Gamma(\beta +
+  N^{-d}_{kw} + N_{dw})] \\
+&- \E_{Q^{-d}}[\log\Gamma(W\beta +  N^{-d}_{k} + N_{d})]\Right)
+\end{align*}
+
+We need to approximate this though. Roughly following Teh's approach
+in his collapsed variational inference for LDA paper.
+
+We approximate the expectation of a function of the random variable
+$N^{-d}_{kw} = \sum_{d' \neq d} \I[z_{d'}=k] N_{d'w}$ using a 2nd
+order Taylor expansion of the function around around its exectation
+(i.e. using $\E[ f(X) ] \approx f(\E[X]) + \Var[X] f''(\E[X])/2$):
+
+\begin{align*}
+   \E_Q[N^{-d}_{kw}] &= \sum_{d' \neq d} q_{d'k} N_{d'w} \\
+   \Var_Q[N^{-d}_{kw}] &= \sum_{d' \neq d} q_{d'k}(1-q_{d'k}) N^2_{d'w} \\
+  \E[\log\Gamma(\beta + N_{dw} + N^{-d}_{kw})] & \approx
+    \log\Gamma(\beta + N_{dw} + \E[N^{-d}_{kw}]) + \frac12 \psi_1(\beta
+    + N_{dw} + \E[N^{-d}_{kw}]) \Var[N^{-d}_{kw}] \\
+    &=     \log\Gamma(\beta + N_{dw} + \sum_{d' \neq d} q_{d'k} N_{d'w}) + \frac12 \psi_1(\beta
+    + N_{dw} + \sum_{d' \neq d} q_{d'k} N_{d'w}) \sum_{d' \neq d} q_{d'k}(1-q_{d'k}) N^2_{d'w}
+\\
+    \E[N^{-d}_{k}] &= \sum_{d' \neq d} q_{d'k} N_{d'} \\
+   \Var[N^{-d}_{k}] &= \sum_{d' \neq d} q_{d'k}(1-q_{d'k}) N^2_{d} \\
+  \E[\log\Gamma(W\beta + N_{d} + N^{-d}_{k})] & \approx
+    \log\Gamma(W\beta + N_{d} + \E[N^{-d}_{k}]) + \frac12 \psi_1(W\beta
+    + N_{d} + \E[N^{-d}_{w}]) \Var[N^{-d}_{k}] \\
+    &=     \log\Gamma(W\beta + N_{d} + \sum_{d' \neq d} q_{d'k} N_{d'}) + \frac12 \psi_1(W\beta
+    + N_{d} + \sum_{d' \neq d} q_{d'k} N_{d'}) \sum_{d' \neq d}
+    q_{d'k}(1-q_{d'k}) N^2_{d}
+\\
+\log q_{dk} &= const + f_{dk} + \sum_{w : N_{dw}>0}  \log\Gamma\Bigl(\beta + N_{dw} + \sum_{d'
+  \neq d} q_{d'k} N_{d'w}\Bigr) - \log\Gamma\Bigl(W\beta + N_{d} + \sum_{d'
+  \neq d} q_{d'k} N_{d'}\Bigr) \\
+  & + \frac12 \Bigl(\sum_{d' \neq d} q_{d'k}(1-q_{d'k})\Bigr) \Biggl(N^2_d \psi_1\Bigl(W\beta
+    + N_{d} + \sum_{d' \neq d} q_{d'k} N_{d'}\Bigr) - \\
+    & \sum_w
+  N^2_{dw} \psi_1\Bigl(\beta + N_{dw} + \sum_{d' \neq d} q_{d'k} N_{d'w}\Bigr)\Biggr)
+\end{align*}
+
+We can make a cruder approximation still by ignoring the second-order
+variance term. This is the approach of CVB0 inference described in
+\url{http://www.ics.uci.edu/~asuncion/pubs/UAI_09.pdf}. This makes the
+update:
+
+\begin{align*}
+  q_{dk} &\propto \exp(f_{dk}) \frac{ \prod_{w : N_{dw}>0} \Gamma\Bigl(\beta + N_{dw} + \sum_{d'
+  \neq d} q_{d'k} N_{d'w}\Bigr)}{\Gamma\Bigl(W\beta + N_{d} + \sum_{d'
+  \neq d} q_{d'k} N_{d'}\Bigr)}
+\end{align*}
+
+\end{document}
